@@ -106,6 +106,7 @@ func (trigger *Trigger) Initialize(_ *sync.WaitGroup, _ context.Context, backgro
 		brokerConfig.AuthMode,
 		brokerConfig.SecretPath,
 		brokerConfig.SkipCertVerify,
+		secure.NewRetrySettings(brokerConfig.RetryDuration, brokerConfig.RetryInterval),
 	)
 
 	mqttClient, err := mqttFactory.Create(opts)

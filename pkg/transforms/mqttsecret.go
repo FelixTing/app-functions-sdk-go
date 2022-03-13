@@ -107,7 +107,8 @@ func (sender *MQTTSecretSender) initializeMQTTClient(ctx interfaces.AppFunctionC
 	}
 
 	config := sender.mqttConfig
-	mqttFactory := secure.NewMqttFactory(ctx, ctx.LoggingClient(), config.AuthMode, config.SecretPath, config.SkipCertVerify)
+	mqttFactory := secure.NewMqttFactory(ctx, ctx.LoggingClient(), config.AuthMode, config.SecretPath,
+		config.SkipCertVerify, secure.RetrySettings{})
 
 	if len(sender.mqttConfig.KeepAlive) > 0 {
 		keepAlive, err := time.ParseDuration(sender.mqttConfig.KeepAlive)

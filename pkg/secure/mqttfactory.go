@@ -20,10 +20,38 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"github.com/eclipse/paho.mqtt.golang"
 	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/messaging"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/secret"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/startup"
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients/logger"
 )
+
+const (
+	defaultRetryDuration = 600
+	defaultRetryInterval = 5
+)
+
+type RetrySettings struct {
+	Retry    bool
+	Duration int
+	Interval int
+}
+
+func NewRetrySettings(duration, interval int) RetrySettings {
+	if secret.IsSecurityEnabled() {
+		if duration <= 0 {
+			duration = defaultRetryDuration
+		}
+		if interval <= 0 {
+			interval = defaultRetryInterval
+		}
+		return RetrySettings{true, duration, interval}
+	} else {
+		return RetrySettings{}
+	}
+}
 
 type MqttFactory struct {
 	sp             messaging.SecretDataProvider
@@ -32,15 +60,18 @@ type MqttFactory struct {
 	secretPath     string
 	opts           *mqtt.ClientOptions
 	skipCertVerify bool
+	retrySettings  RetrySettings
 }
 
-func NewMqttFactory(sp messaging.SecretDataProvider, log logger.LoggingClient, mode string, path string, skipVerify bool) MqttFactory {
+func NewMqttFactory(sp messaging.SecretDataProvider, log logger.LoggingClient, mode string, path string, skipVerify bool,
+	retrySettings RetrySettings) MqttFactory {
 	return MqttFactory{
 		sp:             sp,
 		logger:         log,
 		authMode:       mode,
 		secretPath:     path,
 		skipCertVerify: skipVerify,
+		retrySettings:  retrySettings,
 	}
 }
 
@@ -52,22 +83,26 @@ func (factory MqttFactory) Create(opts *mqtt.ClientOptions) (mqtt.Client, error)
 
 	factory.opts = opts
 
-	//get the secrets from the secret provider and populate the struct
-	secretData, err := messaging.GetSecretData(factory.authMode, factory.secretPath, factory.sp)
+	secretData, err := factory.getValidSecretData()
+	if err != nil && factory.retrySettings.Retry {
+		factory.logger.Error(err.Error())
+		timer := startup.NewTimer(factory.retrySettings.Duration, factory.retrySettings.Interval)
+		for timer.HasNotElapsed() {
+			if secretData, err = factory.getValidSecretData(); err != nil {
+				factory.logger.Error(err.Error())
+				timer.SleepForInterval()
+				continue
+			}
+			break
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	//ensure that the authmode selected has the required secret values
-	if secretData != nil {
-		err = messaging.ValidateSecretData(factory.authMode, factory.secretPath, secretData)
-		if err != nil {
-			return nil, err
-		}
-		// configure the mqtt client with the retrieved secret values
-		err = factory.configureMQTTClientForAuth(secretData)
-		if err != nil {
-			return nil, err
-		}
+
+	err = factory.configureMQTTClientForAuth(secretData)
+	if err != nil {
+		return nil, err
 	}
 
 	return mqtt.NewClient(factory.opts), nil
@@ -109,4 +144,22 @@ func (factory MqttFactory) configureMQTTClientForAuth(secretData *messaging.Secr
 	factory.opts.SetTLSConfig(tlsConfig)
 
 	return nil
+}
+
+func (factory MqttFactory) getValidSecretData() (*messaging.SecretData, error) {
+	//get the secrets from the secret provider and populate the struct
+	secretData, err := messaging.GetSecretData(factory.authMode, factory.secretPath, factory.sp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get secret data from the secret provider, error: %s", err)
+	}
+	if secretData == nil {
+		return nil, nil
+	}
+	//ensure that the authmode selected has the required secret values
+	err = messaging.ValidateSecretData(factory.authMode, factory.secretPath, secretData)
+	if err != nil {
+		return nil, fmt.Errorf("invalid secret data, error: %s", err)
+	} else {
+		return secretData, nil
+	}
 }
