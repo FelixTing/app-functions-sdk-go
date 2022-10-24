@@ -14,7 +14,7 @@ require (
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/mux v1.8.0
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.8.1
 )
 
 replace github.com/edgexfoundry/go-mod-core-contracts/v2 => github.com/FelixTing/go-mod-core-contracts/v2 v2.0.0-20210802055649-0c8c4c8adf1a
